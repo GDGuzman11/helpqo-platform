@@ -151,6 +151,20 @@ class User extends Model<UserAttributes, UserCreationAttributes> implements User
   public addWorkerBooking!: (booking: any) => Promise<void>;
   public addClientBooking!: (booking: any) => Promise<void>;
 
+  // Review associations (added in Step 48)
+  public reviewsGiven?: any[];        // Reviews written by this user
+  public reviewsReceived?: any[];     // Reviews received by this user
+
+  // Review association methods (automatically added by Sequelize associations)
+  public getReviewsGiven!: () => Promise<any[]>;
+  public getReviewsReceived!: () => Promise<any[]>;
+  public createReviewGiven!: (reviewData: any) => Promise<any>;
+  public createReviewReceived!: (reviewData: any) => Promise<any>;
+  public addReviewGiven!: (review: any) => Promise<void>;
+  public addReviewReceived!: (review: any) => Promise<void>;
+  public countReviewsGiven!: () => Promise<number>;
+  public countReviewsReceived!: () => Promise<number>;
+
   // Static Methods
 
   /**
@@ -193,6 +207,351 @@ class User extends Model<UserAttributes, UserCreationAttributes> implements User
       ...options
     });
   }
+
+// ==================== BUSINESS INTELLIGENCE METHODS ====================
+
+  /**
+   * Get comprehensive marketplace analytics
+   */
+  public static async getMarketplaceAnalytics(): Promise<{
+    total_users: number;
+    user_distribution: {
+      clients: number;
+      workers: number;
+      admins: number;
+      client_percentage: number;
+      worker_percentage: number;
+    };
+    verification_metrics: {
+      verified_users: number;
+      verification_rate: number;
+      phone_verified: number;
+      email_verified: number;
+    };
+    geographic_distribution: Record<string, number>;
+    engagement_metrics: {
+      active_users_7_days: number;
+      active_users_30_days: number;
+      new_users_this_month: number;
+      retention_rate: number;
+    };
+    growth_metrics: {
+      monthly_growth_rate: number;
+      weekly_signups: number;
+      user_acquisition_trend: string;
+    };
+  }> {
+    const totalUsers = await User.count({ where: { is_active: true } });
+    
+    // User distribution by role
+    const clients = await User.count({ where: { role: 'client', is_active: true } });
+    const workers = await User.count({ where: { role: 'worker', is_active: true } });
+    const admins = await User.count({ where: { role: 'admin', is_active: true } });
+    
+    // Verification metrics
+    const verifiedUsers = await User.count({ where: { is_verified: true, is_active: true } });
+    const phoneVerified = await User.count({ where: { is_phone_verified: true, is_active: true } });
+    const emailVerified = await User.count({ where: { is_email_verified: true, is_active: true } });
+    
+    // Geographic distribution (top cities)
+    const geoDistribution = await User.findAll({
+      attributes: [
+        'city',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'user_count']
+      ],
+      where: { is_active: true },
+      group: ['city'],
+      order: [[sequelize.fn('COUNT', sequelize.col('id')), 'DESC']],
+      limit: 10,
+      raw: true
+    }) as any[];
+
+    const geographicDistribution: Record<string, number> = {};
+    geoDistribution.forEach((item: any) => {
+      if (item.city) {
+        geographicDistribution[item.city] = parseInt(item.user_count);
+      }
+    });
+
+    // Engagement metrics
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const thisMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const lastMonthStart = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1);
+
+    const activeUsers7Days = await User.count({
+      where: {
+        last_login: { [Op.gte]: sevenDaysAgo },
+        is_active: true
+      }
+    });
+
+    const activeUsers30Days = await User.count({
+      where: {
+        last_login: { [Op.gte]: thirtyDaysAgo },
+        is_active: true
+      }
+    });
+
+    const newUsersThisMonth = await User.count({
+      where: {
+        created_at: { [Op.gte]: thisMonthStart },
+        is_active: true
+      }
+    });
+
+    const newUsersLastMonth = await User.count({
+      where: {
+        created_at: { 
+          [Op.gte]: lastMonthStart, 
+          [Op.lt]: thisMonthStart 
+        },
+        is_active: true
+      }
+    });
+
+    // Calculate growth rate
+    const monthlyGrowthRate = newUsersLastMonth > 0 
+      ? ((newUsersThisMonth - newUsersLastMonth) / newUsersLastMonth) * 100 
+      : 0;
+
+    const weeklySignups = await User.count({
+      where: {
+        created_at: { [Op.gte]: sevenDaysAgo },
+        is_active: true
+      }
+    });
+
+    return {
+      total_users: totalUsers,
+      user_distribution: {
+        clients,
+        workers,
+        admins,
+        client_percentage: totalUsers > 0 ? Math.round((clients / totalUsers) * 100) : 0,
+        worker_percentage: totalUsers > 0 ? Math.round((workers / totalUsers) * 100) : 0
+      },
+      verification_metrics: {
+        verified_users: verifiedUsers,
+        verification_rate: totalUsers > 0 ? Math.round((verifiedUsers / totalUsers) * 100) : 0,
+        phone_verified: phoneVerified,
+        email_verified: emailVerified
+      },
+      geographic_distribution: geographicDistribution,
+      engagement_metrics: {
+        active_users_7_days: activeUsers7Days,
+        active_users_30_days: activeUsers30Days,
+        new_users_this_month: newUsersThisMonth,
+        retention_rate: totalUsers > 0 ? Math.round((activeUsers30Days / totalUsers) * 100) : 0
+      },
+      growth_metrics: {
+        monthly_growth_rate: Math.round(monthlyGrowthRate * 10) / 10,
+        weekly_signups: weeklySignups,
+        user_acquisition_trend: monthlyGrowthRate > 0 ? 'growing' : monthlyGrowthRate < 0 ? 'declining' : 'stable'
+      }
+    };
+  }
+
+  /**
+   * Get user engagement scoring (simplified to avoid circular dependencies)
+   */
+  public static async getUserEngagementScore(userId: string): Promise<{
+    user_id: string;
+    engagement_score: number;
+    score_breakdown: {
+      profile_completion: number;
+      activity_level: number;
+      verification_status: number;
+      account_age: number;
+    };
+    engagement_level: 'low' | 'medium' | 'high' | 'exceptional';
+    recommendations: string[];
+  }> {
+    const user = await User.findByPk(userId);
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    // Profile completion scoring (0-25 points)
+    let profileCompletion = 0;
+    if (user.profile_picture) profileCompletion += 5;
+    if (user.address && user.city && user.province) profileCompletion += 5;
+    if (user.emergency_contact_name && user.emergency_contact_phone) profileCompletion += 5;
+    if (user.date_of_birth) profileCompletion += 5;
+    if (user.first_name && user.last_name) profileCompletion += 5;
+
+    // Activity level scoring (0-25 points)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const recentLogin = user.last_login && user.last_login > thirtyDaysAgo;
+    
+    let activityLevel = 0;
+    if (recentLogin) activityLevel += 15;
+    if (user.is_active) activityLevel += 10;
+
+    // Verification status scoring (0-25 points)
+    let verificationStatus = 0;
+    if (user.is_email_verified) verificationStatus += 8;
+    if (user.is_phone_verified) verificationStatus += 8;
+    if (user.is_verified) verificationStatus += 9;
+
+    // Account age scoring (0-25 points)
+    const accountAgeInDays = Math.floor((Date.now() - user.created_at.getTime()) / (1000 * 60 * 60 * 24));
+    let accountAge = 0;
+    if (accountAgeInDays > 7) accountAge += 8;
+    if (accountAgeInDays > 30) accountAge += 8;
+    if (accountAgeInDays > 90) accountAge += 9;
+
+    const totalScore = profileCompletion + activityLevel + verificationStatus + accountAge;
+    
+    // Determine engagement level
+    let engagementLevel: 'low' | 'medium' | 'high' | 'exceptional';
+    if (totalScore >= 80) engagementLevel = 'exceptional';
+    else if (totalScore >= 60) engagementLevel = 'high';
+    else if (totalScore >= 40) engagementLevel = 'medium';
+    else engagementLevel = 'low';
+
+    // Generate recommendations
+    const recommendations: string[] = [];
+    if (profileCompletion < 20) recommendations.push('Complete your profile for better visibility');
+    if (activityLevel < 15) recommendations.push('Stay active by logging in regularly');
+    if (verificationStatus < 15) recommendations.push('Verify your email and phone number');
+    if (accountAge < 15) recommendations.push('Continue using the platform to build trust');
+    if (recommendations.length === 0) recommendations.push('Keep up the excellent engagement!');
+
+    return {
+      user_id: userId,
+      engagement_score: totalScore,
+      score_breakdown: {
+        profile_completion: profileCompletion,
+        activity_level: activityLevel,
+        verification_status: verificationStatus,
+        account_age: accountAge
+      },
+      engagement_level: engagementLevel,
+      recommendations
+    };
+  }
+
+  /**
+   * Get market penetration analysis
+   */
+  public static async getMarketPenetrationAnalysis(): Promise<{
+    total_addressable_market: {
+      metro_manila_population: number;
+      estimated_target_demographic: number;
+      current_user_base: number;
+      market_penetration_percentage: number;
+    };
+    geographic_penetration: Record<string, {
+      users: number;
+      estimated_population: number;
+      penetration_rate: number;
+    }>;
+    role_distribution_by_city: Record<string, {
+      clients: number;
+      workers: number;
+      client_worker_ratio: number;
+    }>;
+    growth_opportunities: {
+      underserved_cities: string[];
+      high_potential_areas: string[];
+      expansion_recommendations: string[];
+    };
+  }> {
+    // Philippine market data (approximate)
+    const marketData = {
+      'Metro Manila': 13000000,
+      'Cebu City': 950000,
+      'Davao City': 1800000,
+      'Quezon City': 3000000,
+      'Manila': 1800000,
+      'Makati': 600000,
+      'Pasig': 800000,
+      'Taguig': 900000,
+      'Caloocan': 1600000,
+      'Las Piñas': 600000
+    };
+
+    const totalUsers = await User.count({ where: { is_active: true } });
+    const estimatedTargetDemographic = 13000000 * 0.15; // 15% of Metro Manila (middle class)
+
+    // Geographic penetration analysis
+    const geographicPenetration: Record<string, any> = {};
+    const roleDistributionByCity: Record<string, any> = {};
+
+    for (const [city, population] of Object.entries(marketData)) {
+      const cityUsers = await User.count({
+        where: { 
+          city: { [Op.iLike]: `%${city}%` },
+          is_active: true 
+        }
+      });
+
+      const cityClients = await User.count({
+        where: { 
+          city: { [Op.iLike]: `%${city}%` },
+          role: 'client',
+          is_active: true 
+        }
+      });
+
+      const cityWorkers = await User.count({
+        where: { 
+          city: { [Op.iLike]: `%${city}%` },
+          role: 'worker',
+          is_active: true 
+        }
+      });
+
+      geographicPenetration[city] = {
+        users: cityUsers,
+        estimated_population: population,
+        penetration_rate: Math.round((cityUsers / (population * 0.15)) * 10000) / 100 // Target 15% of population
+      };
+
+      roleDistributionByCity[city] = {
+        clients: cityClients,
+        workers: cityWorkers,
+        client_worker_ratio: cityWorkers > 0 ? Math.round((cityClients / cityWorkers) * 100) / 100 : 0
+      };
+    }
+
+    // Identify growth opportunities
+    const underservedCities = Object.entries(geographicPenetration)
+      .filter(([_, data]) => data.penetration_rate < 0.1)
+      .map(([city, _]) => city);
+
+    const highPotentialAreas = Object.entries(geographicPenetration)
+      .filter(([_, data]) => data.penetration_rate > 0 && data.penetration_rate < 0.5)
+      .map(([city, _]) => city);
+
+    const expansionRecommendations = [];
+    if (underservedCities.length > 0) {
+      expansionRecommendations.push(`Focus marketing efforts in: ${underservedCities.slice(0, 3).join(', ')}`);
+    }
+    if (highPotentialAreas.length > 0) {
+      expansionRecommendations.push(`Expand services in: ${highPotentialAreas.slice(0, 3).join(', ')}`);
+    }
+    expansionRecommendations.push('Target middle-class households with digital marketing');
+
+    return {
+      total_addressable_market: {
+        metro_manila_population: 13000000,
+        estimated_target_demographic: Math.round(estimatedTargetDemographic),
+        current_user_base: totalUsers,
+        market_penetration_percentage: Math.round((totalUsers / estimatedTargetDemographic) * 10000) / 100
+      },
+      geographic_penetration: geographicPenetration,
+      role_distribution_by_city: roleDistributionByCity,
+      growth_opportunities: {
+        underserved_cities: underservedCities,
+        high_potential_areas: highPotentialAreas,
+        expansion_recommendations: expansionRecommendations
+      }
+    };
+  }
+
 }
 
 // Initialize User Model

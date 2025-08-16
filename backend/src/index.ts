@@ -3,9 +3,13 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+import './models';
 import { testConnection } from './config/database';
 import testRoutes from './routes/test';
+import authRoutes from './routes/auth';
 import { syncDatabase } from './config/database';
+import verificationRoutes from './routes/verification';
+import profileRoutes from './routes/profile';
 
 // Load environment variables
 dotenv.config();
@@ -95,38 +99,132 @@ app.get('/health/database', async (req, res) => {
   }
 });
 
-// API Routes - Updated for Worker Model
+// API Routes - Enhanced with Verification System
 app.get('/api/v1', (req, res) => {
   res.status(200).json({
-    message: 'HelpQo API v1 - Complete marketplace models ready!',
-    endpoints: {
-      health: '/health',
-      databaseHealth: '/health/database',
-      auth: '/api/v1/auth (coming soon)',
-      users: '/api/v1/users (coming soon)',
-      workers: '/api/v1/workers (coming soon)',
-      jobs: '/api/v1/jobs (coming soon)',
-      bookings: '/api/v1/bookings (coming soon)',
-      test: '/api/v1/test (development only)'
+    message: 'HelpQo API v1 - Enhanced User Registration with Verification System ✅',
+    version: '1.0.0',
+    environment: process.env.NODE_ENV || 'development',
+    timestamp: new Date().toISOString(),
+
+    // Philippine Market Features
+    market: {
+      target_region: 'Philippines',
+      currency: 'PHP (₱)',
+      commission_rate: '15%',
+      supported_cities: [
+        'Metro Manila', 'Quezon City', 'Makati', 'Taguig', 'Pasig',
+        'Cebu City', 'Davao City', 'Iloilo City', 'Bacolod', 'Cagayan de Oro'
+      ],
+      compliance: {
+        nbi_clearance: 'Required for workers',
+        government_registration: ['DTI', 'BSP', 'SEC'],
+        phone_validation: '+639XXXXXXXXX format',
+        age_requirement: '18+ years old'
+      }
     },
+
+    // Available Endpoints
+    endpoints: {
+      authentication: {
+        base: '/api/v1/auth',
+        endpoints: [
+          'POST /register - Enhanced user registration with Philippine validation ✅',
+          'POST /login - JWT authentication with rate limiting ✅',
+          'GET /dev/users - Development user listing ✅'
+        ],
+        features: [
+          'Philippine phone normalization (+639XXXXXXXXX)',
+          'Filipino name capitalization',
+          'Enhanced password validation (8+ chars, upper/lower/numbers)',
+          'Disposable email blocking',
+          'Input sanitization and business rules',
+          'Automatic worker profile creation',
+          'Rate limiting (5 attempts/15min)'
+        ]
+      },
+      verification: { // NEW: Verification endpoints
+        base: '/api/v1/verification',
+        endpoints: [
+          'GET /status/:userId - Get comprehensive verification status ✅',
+          'POST /resend-email - Resend verification email with rate limiting ✅',
+          'POST /phone/send - Send SMS verification code (Philippine networks) ✅',
+          'POST /phone/verify - Verify SMS code ✅',
+          'POST /email/verify - Verify email token ✅',
+          'GET /onboarding/:userId - Role-specific onboarding recommendations ✅',
+          'GET /preview/:template/:role - Email template preview (dev only) ✅'
+        ],
+        features: [
+          'Email verification with 64-character hex tokens',
+          'SMS verification for Philippine phone numbers',
+          'Professional email templates with Philippine branding',
+          'Onboarding progress tracking with weighted scoring',
+          'Role-specific recommendations (client vs worker)',
+          'Multi-tier rate limiting (verification: 10/15min, resend: 3/5min)',
+          'Account verification status with next-step guidance'
+        ]
+      },
+      testing: {
+        base: '/api/v1/test',
+        endpoints: [
+          'POST /sync - Database synchronization ✅',
+          'DELETE /cleanup - Test data cleanup ✅',
+          'POST /user - Test user creation with validation ✅',
+          'POST /worker - Test worker creation with NBI compliance ✅',
+          'POST /job - Test job creation with budget validation ✅',
+          'POST /booking - Test booking workflow with commission ✅',
+          'POST /workflow - Complete 7-step marketplace workflow ✅',
+          'POST /validation/phone - Philippine phone validation testing ✅',
+          'POST /validation/name - Filipino name processing testing ✅',
+          'POST /validation/registration - Complete validation chain testing ✅'
+        ]
+      }
+    },
+
+    // Database Models Status
     models: {
       users: 'User authentication and profiles ✅',
-      workers: 'Professional worker profiles ✅',
-      jobs: 'Job postings and marketplace ✅',
-      bookings: 'Job assignments and workflow ✅',
-      reviews: 'Rating system (coming in Step 48)'
+      workers: 'Professional worker profiles with NBI clearance ✅',
+      jobs: 'Job postings with ₱50-₱50,000 budget validation ✅',
+      bookings: 'Complete workflow management with 15% commission ✅',
+      reviews: 'Rating system with 6-category scoring ✅'
     },
-      features: {
-        authentication: 'JWT + bcrypt password security',
-        verification: 'Philippine NBI clearance integration',
-        marketplace: 'Complete job posting, booking, payment workflow',
-        location: 'Philippine cities + GPS coordinates',
-        payments: 'Escrow system + commission calculation',
-        workflow: 'Complete booking lifecycle (application → payment)',
-        compliance: 'Philippine market validation and currency'
-      }
+
+    // Enhanced Features in Step 52
+    enhanced_features: {
+      'Philippine Compliance': 'NBI clearance, ₱ currency, +639 phone validation',
+      'Email Verification': 'Professional templates with role-specific content',
+      'SMS Verification': 'Philippine mobile network integration ready',
+      'Advanced Validation': '20+ validation rules with business logic',
+      'Profile Completion': 'Weighted scoring algorithms with recommendations',
+      'Rate Limiting': 'Multi-tier protection (auth, verification, resend)',
+      'Input Sanitization': 'Security-first approach with forbidden field removal',
+      'Business Intelligence': 'Verification analytics and user engagement scoring'
+    },
+
+    // Development Features
+    development: {
+      email_preview: 'Template preview system with mock data',
+      validation_testing: 'Comprehensive validation endpoint testing',
+      verification_statistics: 'Real-time verification metrics',
+      debug_logging: 'Detailed console logging for development'
+    }
   });
 });
+
+// Authentication Routes
+app.use('/api/v1/auth', authRoutes);
+
+// Verification Routes - NEW
+app.use('/api/v1/verification', verificationRoutes);
+
+// Profile Routes - NEW
+app.use('/api/v1/profile', profileRoutes);
+
+// Test Routes - For development and model testing
+if (process.env.NODE_ENV === 'development') {
+  app.use('/api/v1/test', testRoutes);
+}
 
 // Test Routes - For development and model testing
 if (process.env.NODE_ENV === 'development') {

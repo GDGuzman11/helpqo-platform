@@ -10,6 +10,7 @@
     "rebuild": "npm run clean && npm run build",
     "test": "echo \"Tests coming soon...\" && exit 0"
   },
+  
   "keywords": [],
   "author": "",
   "license": "ISC",

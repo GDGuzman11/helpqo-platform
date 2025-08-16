@@ -315,6 +315,454 @@ class Worker extends Model<WorkerAttributes, WorkerCreationAttributes> implement
     });
   }
 
+  // ==================== BUSINESS INTELLIGENCE METHODS ====================
+
+  /**
+   * Get comprehensive worker marketplace analytics
+   */
+  public static async getWorkerMarketplaceAnalytics(): Promise<{
+    total_workers: number;
+    verification_distribution: {
+      basic: number;
+      verified: number;
+      premium: number;
+      nbi_approved: number;
+      nbi_approval_rate: number;
+    };
+    availability_metrics: {
+      available_workers: number;
+      availability_rate: number;
+      featured_workers: number;
+    };
+    performance_metrics: {
+      average_rating: number;
+      top_performers: number;
+      profile_completion_rate: number;
+      average_completion_percentage: number;
+    };
+    skill_demand_analysis: {
+      most_demanded_skills: Array<{ skill: string; worker_count: number; percentage: number }>;
+      skill_coverage: number;
+      skills_gap: string[];
+    };
+    earning_insights: {
+      average_hourly_rate: number;
+      rate_distribution: {
+        budget_friendly: number;    // ₱50-₱200
+        mid_range: number;          // ₱201-₱500  
+        premium: number;            // ₱501-₱1000
+        luxury: number;             // ₱1000+
+      };
+      top_earner_threshold: number;
+    };
+  }> {
+    const totalWorkers = await Worker.count();
+    
+    // Verification distribution
+    const basicWorkers = await Worker.count({ where: { verification_level: 'basic' } });
+    const verifiedWorkers = await Worker.count({ where: { verification_level: 'verified' } });
+    const premiumWorkers = await Worker.count({ where: { verification_level: 'premium' } });
+    const nbiApproved = await Worker.count({ where: { nbi_clearance_status: 'approved' } });
+
+    // Availability metrics
+    const availableWorkers = await Worker.count({ where: { is_available: true } });
+    const featuredWorkers = await Worker.count({ where: { is_featured: true } });
+
+    // Performance metrics
+    const performanceStats = await Worker.findAll({
+      attributes: [
+        [sequelize.fn('AVG', sequelize.col('rating_average')), 'avg_rating'],
+        [sequelize.fn('AVG', sequelize.col('profile_completion_percentage')), 'avg_completion']
+      ],
+      raw: true
+    }) as any[];
+
+    const averageRating = parseFloat(performanceStats[0]?.avg_rating || '0');
+    const averageCompletion = parseFloat(performanceStats[0]?.avg_completion || '0');
+    const topPerformers = await Worker.count({ 
+      where: { 
+        rating_average: { [Op.gte]: 4.5 },
+        total_reviews: { [Op.gte]: 5 }
+      } 
+    });
+
+    // Skills demand analysis
+    const skillsData = await Worker.findAll({
+      attributes: ['skills'],
+        where: {
+          [Op.and]: [
+            sequelize.literal("array_length(skills, 1) > 0")
+          ]
+        },
+      raw: true
+    }) as any[];
+
+    const skillCounts: Record<string, number> = {};
+    let totalSkillEntries = 0;
+
+    skillsData.forEach((worker) => {
+      if (worker.skills && Array.isArray(worker.skills)) {
+        worker.skills.forEach((skill: string) => {
+          const normalizedSkill = skill.trim().toLowerCase();
+          skillCounts[normalizedSkill] = (skillCounts[normalizedSkill] || 0) + 1;
+          totalSkillEntries++;
+        });
+      }
+    });
+
+    const mostDemandedSkills = Object.entries(skillCounts)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 10)
+      .map(([skill, count]) => ({
+        skill: skill.charAt(0).toUpperCase() + skill.slice(1),
+        worker_count: count,
+        percentage: Math.round((count / totalWorkers) * 100)
+      }));
+
+    // Identify skills gaps (common job categories with low worker coverage)
+    const commonJobSkills = [
+      'house cleaning', 'plumbing', 'electrical work', 'cooking', 
+      'childcare', 'gardening', 'tutoring', 'computer repair'
+    ];
+    
+    const skillsGap = commonJobSkills.filter(skill => 
+      !skillCounts[skill] || skillCounts[skill] < totalWorkers * 0.1
+    );
+
+    // Earning insights
+    const rateStats = await Worker.findAll({
+      attributes: [
+        [sequelize.fn('AVG', sequelize.col('hourly_rate')), 'avg_rate'],
+        [sequelize.fn('COUNT', sequelize.literal("CASE WHEN hourly_rate BETWEEN 50 AND 200 THEN 1 END")), 'budget_friendly'],
+        [sequelize.fn('COUNT', sequelize.literal("CASE WHEN hourly_rate BETWEEN 201 AND 500 THEN 1 END")), 'mid_range'],
+        [sequelize.fn('COUNT', sequelize.literal("CASE WHEN hourly_rate BETWEEN 501 AND 1000 THEN 1 END")), 'premium'],
+        [sequelize.fn('COUNT', sequelize.literal("CASE WHEN hourly_rate > 1000 THEN 1 END")), 'luxury']
+      ],
+      raw: true
+    }) as any[];
+
+    const avgRate = parseFloat(rateStats[0]?.avg_rate || '0');
+    const topEarnerThreshold = avgRate * 1.5; // 50% above average
+
+    return {
+      total_workers: totalWorkers,
+      verification_distribution: {
+        basic: basicWorkers,
+        verified: verifiedWorkers,
+        premium: premiumWorkers,
+        nbi_approved: nbiApproved,
+        nbi_approval_rate: totalWorkers > 0 ? Math.round((nbiApproved / totalWorkers) * 100) : 0
+      },
+      availability_metrics: {
+        available_workers: availableWorkers,
+        availability_rate: totalWorkers > 0 ? Math.round((availableWorkers / totalWorkers) * 100) : 0,
+        featured_workers: featuredWorkers
+      },
+      performance_metrics: {
+        average_rating: Math.round(averageRating * 10) / 10,
+        top_performers: topPerformers,
+        profile_completion_rate: totalWorkers > 0 ? Math.round((totalWorkers / totalWorkers) * 100) : 0,
+        average_completion_percentage: Math.round(averageCompletion)
+      },
+      skill_demand_analysis: {
+        most_demanded_skills: mostDemandedSkills,
+        skill_coverage: Object.keys(skillCounts).length,
+        skills_gap: skillsGap
+      },
+      earning_insights: {
+        average_hourly_rate: Math.round(avgRate),
+        rate_distribution: {
+          budget_friendly: parseInt(rateStats[0]?.budget_friendly || '0'),
+          mid_range: parseInt(rateStats[0]?.mid_range || '0'),
+          premium: parseInt(rateStats[0]?.premium || '0'),
+          luxury: parseInt(rateStats[0]?.luxury || '0')
+        },
+        top_earner_threshold: Math.round(topEarnerThreshold)
+      }
+    };
+  }
+
+  /**
+   * Get individual worker performance benchmarking
+   */
+  public static async getWorkerPerformanceBenchmark(workerId: string): Promise<{
+    worker_id: string;
+    performance_score: number;
+    benchmark_analysis: {
+      rating_percentile: number;
+      rate_percentile: number;
+      experience_percentile: number;
+      profile_completeness_percentile: number;
+    };
+    market_position: 'top_10_percent' | 'top_25_percent' | 'above_average' | 'average' | 'below_average';
+    improvement_recommendations: string[];
+    competitive_analysis: {
+      similar_workers_count: number;
+      avg_competitor_rate: number;
+      rate_competitiveness: 'very_competitive' | 'competitive' | 'average' | 'expensive' | 'overpriced';
+    };
+  }> {
+    const worker = await Worker.findByPk(workerId);
+    if (!worker) {
+      throw new Error('Worker not found');
+    }
+
+    // Get benchmark data
+    const allWorkers = await Worker.findAll({
+      attributes: ['rating_average', 'hourly_rate', 'experience_years', 'profile_completion_percentage'],
+      raw: true
+    });
+
+    if (allWorkers.length === 0) {
+      throw new Error('No benchmark data available');
+    }
+
+    // Calculate percentiles
+    const calculatePercentile = (value: number, dataset: number[]): number => {
+      const sorted = dataset.filter(v => v !== null && v !== undefined).sort((a, b) => a - b);
+      if (sorted.length === 0) return 0;
+      
+      const lowerCount = sorted.filter(v => v < value).length;
+      return Math.round((lowerCount / sorted.length) * 100);
+    };
+
+    const ratings = allWorkers.map(w => w.rating_average || 0);
+    const rates = allWorkers.map(w => w.hourly_rate || 0);
+    const experiences = allWorkers.map(w => w.experience_years || 0);
+    const completions = allWorkers.map(w => w.profile_completion_percentage || 0);
+
+    const ratingPercentile = calculatePercentile(worker.rating_average || 0, ratings);
+    const ratePercentile = calculatePercentile(worker.hourly_rate || 0, rates);
+    const experiencePercentile = calculatePercentile(worker.experience_years || 0, experiences);
+    const completionPercentile = calculatePercentile(worker.profile_completion_percentage || 0, completions);
+
+    // Calculate overall performance score
+    const performanceScore = Math.round((ratingPercentile + ratePercentile + experiencePercentile + completionPercentile) / 4);
+
+    // Determine market position
+    let marketPosition: 'top_10_percent' | 'top_25_percent' | 'above_average' | 'average' | 'below_average';
+    if (performanceScore >= 90) marketPosition = 'top_10_percent';
+    else if (performanceScore >= 75) marketPosition = 'top_25_percent';
+    else if (performanceScore >= 60) marketPosition = 'above_average';
+    else if (performanceScore >= 40) marketPosition = 'average';
+    else marketPosition = 'below_average';
+
+    // Generate improvement recommendations
+    const recommendations: string[] = [];
+    if (ratingPercentile < 50) recommendations.push('Focus on improving service quality to boost ratings');
+    if (completionPercentile < 50) recommendations.push('Complete your profile to improve visibility');
+    if (experiencePercentile < 30) recommendations.push('Highlight your experience and completed jobs');
+    if (ratePercentile > 80) recommendations.push('Consider adjusting rates to be more competitive');
+    if (ratePercentile < 30) recommendations.push('You may be able to increase your rates');
+
+    if (recommendations.length === 0) {
+      recommendations.push('Excellent performance! Focus on maintaining quality service');
+    }
+
+    // Competitive analysis (workers with similar skills)
+    const similarWorkers = await Worker.findAll({
+      where: {
+        id: { [Op.ne]: workerId },
+        skills: { [Op.overlap]: worker.skills || [] }
+      },
+      attributes: ['hourly_rate'],
+      raw: true
+    });
+
+    const avgCompetitorRate = similarWorkers.length > 0
+      ? similarWorkers.reduce((sum, w) => sum + (w.hourly_rate || 0), 0) / similarWorkers.length
+      : 0;
+
+    let rateCompetitiveness: 'very_competitive' | 'competitive' | 'average' | 'expensive' | 'overpriced';
+    const rateRatio = avgCompetitorRate > 0 ? (worker.hourly_rate || 0) / avgCompetitorRate : 1;
+    
+    if (rateRatio <= 0.8) rateCompetitiveness = 'very_competitive';
+    else if (rateRatio <= 0.95) rateCompetitiveness = 'competitive';
+    else if (rateRatio <= 1.1) rateCompetitiveness = 'average';
+    else if (rateRatio <= 1.3) rateCompetitiveness = 'expensive';
+    else rateCompetitiveness = 'overpriced';
+
+    return {
+      worker_id: workerId,
+      performance_score: performanceScore,
+      benchmark_analysis: {
+        rating_percentile: ratingPercentile,
+        rate_percentile: ratePercentile,
+        experience_percentile: experiencePercentile,
+        profile_completeness_percentile: completionPercentile
+      },
+      market_position: marketPosition,
+      improvement_recommendations: recommendations,
+      competitive_analysis: {
+        similar_workers_count: similarWorkers.length,
+        avg_competitor_rate: Math.round(avgCompetitorRate),
+        rate_competitiveness: rateCompetitiveness
+      }
+    };
+  }
+
+  /**
+   * Get earning potential analysis for workers
+   */
+  public static async getEarningPotentialAnalysis(): Promise<{
+    market_overview: {
+      highest_earning_skills: Array<{ skill: string; avg_rate: number; worker_count: number }>;
+      fastest_growing_categories: string[];
+      premium_opportunities: string[];
+    };
+    rate_optimization: {
+      undervalued_skills: Array<{ skill: string; suggested_rate_increase: number }>;
+      oversaturated_skills: string[];
+      emerging_opportunities: string[];
+    };
+    geographic_insights: {
+      high_paying_areas: Array<{ city: string; avg_rate: number; worker_count: number }>;
+      underserved_markets: string[];
+      expansion_opportunities: string[];
+    };
+    recommendations: {
+      for_new_workers: string[];
+      for_existing_workers: string[];
+      market_opportunities: string[];
+    };
+  }> {
+    // Get skill-based earning data
+    const skillEarnings = await Worker.findAll({
+      attributes: [
+        'skills',
+        'hourly_rate',
+        'service_areas'
+      ],
+      where: {
+        hourly_rate: { [Op.ne]: undefined },
+        [Op.and]: [
+          sequelize.literal("array_length(skills, 1) > 0")
+        ]
+      },
+      include: [{
+        model: sequelize.models.User,
+        as: 'user',
+        attributes: ['city'],
+        required: true
+      }],
+      raw: true
+    }) as any[];
+
+    // Analyze highest earning skills
+    const skillRates: Record<string, { total: number; count: number; rates: number[] }> = {};
+    const cityRates: Record<string, { total: number; count: number }> = {};
+
+    skillEarnings.forEach((worker) => {
+      const rate = worker.hourly_rate || 0;
+      const city = worker['user.city'] || 'Unknown';
+
+      // Process skills
+      if (worker.skills && Array.isArray(worker.skills)) {
+        worker.skills.forEach((skill: string) => {
+          const normalizedSkill = skill.trim().toLowerCase();
+          if (!skillRates[normalizedSkill]) {
+            skillRates[normalizedSkill] = { total: 0, count: 0, rates: [] };
+          }
+          skillRates[normalizedSkill].total += rate;
+          skillRates[normalizedSkill].count += 1;
+          skillRates[normalizedSkill].rates.push(rate);
+        });
+      }
+
+      // Process cities
+      if (!cityRates[city]) {
+        cityRates[city] = { total: 0, count: 0 };
+      }
+      cityRates[city].total += rate;
+      cityRates[city].count += 1;
+    });
+
+    // Calculate highest earning skills
+    const highestEarningSkills = Object.entries(skillRates)
+      .map(([skill, data]) => ({
+        skill: skill.charAt(0).toUpperCase() + skill.slice(1),
+        avg_rate: Math.round(data.total / data.count),
+        worker_count: data.count
+      }))
+      .filter(item => item.worker_count >= 2) // At least 2 workers for reliable data
+      .sort((a, b) => b.avg_rate - a.avg_rate)
+      .slice(0, 10);
+
+    // Identify undervalued skills (high demand, low rates)
+    const marketAverage = skillEarnings.reduce((sum, w) => sum + (w.hourly_rate || 0), 0) / skillEarnings.length;
+    const undervaluedSkills = Object.entries(skillRates)
+      .map(([skill, data]) => ({
+        skill: skill.charAt(0).toUpperCase() + skill.slice(1),
+        avg_rate: data.total / data.count,
+        worker_count: data.count
+      }))
+      .filter(item => item.avg_rate < marketAverage * 0.8 && item.worker_count >= 3)
+      .map(item => ({
+        skill: item.skill,
+        suggested_rate_increase: Math.round((marketAverage - item.avg_rate) * 0.5)
+      }))
+      .slice(0, 5);
+
+    // High paying geographic areas
+    const highPayingAreas = Object.entries(cityRates)
+      .map(([city, data]) => ({
+        city,
+        avg_rate: Math.round(data.total / data.count),
+        worker_count: data.count
+      }))
+      .filter(item => item.worker_count >= 2)
+      .sort((a, b) => b.avg_rate - a.avg_rate)
+      .slice(0, 8);
+
+    // Generate recommendations
+    const newWorkerRecommendations = [
+      `Focus on high-earning skills: ${highestEarningSkills.slice(0, 3).map(s => s.skill).join(', ')}`,
+      'Complete NBI clearance to access premium opportunities',
+      'Start with competitive rates and increase based on reviews'
+    ];
+
+    const existingWorkerRecommendations = [
+      'Regularly review and adjust your rates based on market trends',
+      'Consider expanding to underserved geographic areas',
+      'Invest in skill development for higher-paying categories'
+    ];
+
+    if (undervaluedSkills.length > 0) {
+      existingWorkerRecommendations.push(
+        `Consider rate increases for: ${undervaluedSkills.slice(0, 2).map(s => s.skill).join(', ')}`
+      );
+    }
+
+    const marketOpportunities = [
+      'Digital services and computer repair show strong growth potential',
+      'Home healthcare and elderly care have increasing demand',
+      'Eco-friendly cleaning and maintenance services are emerging'
+    ];
+
+    return {
+      market_overview: {
+        highest_earning_skills: highestEarningSkills,
+        fastest_growing_categories: ['Computer Repair', 'Elderly Care', 'Home Healthcare'],
+        premium_opportunities: ['Specialized Plumbing', 'Electrical Installation', 'Professional Cleaning']
+      },
+      rate_optimization: {
+        undervalued_skills: undervaluedSkills,
+        oversaturated_skills: ['Basic House Cleaning', 'General Labor'],
+        emerging_opportunities: ['Smart Home Setup', 'Eco-friendly Services', 'Senior Care']
+      },
+      geographic_insights: {
+        high_paying_areas: highPayingAreas,
+        underserved_markets: ['Antipolo', 'Bacoor', 'General Santos'],
+        expansion_opportunities: ['Expanding Metro Manila suburbs', 'Growing provincial cities']
+      },
+      recommendations: {
+        for_new_workers: newWorkerRecommendations,
+        for_existing_workers: existingWorkerRecommendations,
+        market_opportunities: marketOpportunities
+      }
+    };
+  }
+
   // Association Methods (added by Sequelize)
   public getUser!: () => Promise<any>;
   public setUser!: (user: any) => Promise<void>;

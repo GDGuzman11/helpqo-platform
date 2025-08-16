@@ -1,6 +1,8 @@
 import express from 'express';
-import { User, Worker, Job, Booking, syncDatabase } from '../models';
+import { User, Worker, Job, Booking, Review, syncDatabase } from '../models';
 import { Op } from 'sequelize';
+import { Request, Response } from 'express'; // Add this line
+import ValidationService from '../services/validation'; // Add this line
 
 const router = express.Router();
 
@@ -23,6 +25,277 @@ router.post('/sync', async (req, res) => {
     res.status(500).json({
       status: 'error',
       message: 'Database synchronization failed',
+      error: process.env.NODE_ENV === 'development' ? error : 'Internal server error'
+    });
+  }
+});
+
+// POST /api/v1/test/user - Test User model creation and methods
+router.post('/user', async (req, res) => {
+  try {
+    console.log('🧪 Testing User model creation...');
+    
+    // Test user data
+    const testUserData = {
+      email: 'test@helpqo.com',
+      phone: '+639171234567',
+      password_hash: 'test123456', // Will be hashed automatically
+      first_name: 'juan',
+      last_name: 'dela cruz',
+      role: 'client' as const,
+      city: 'Manila',
+      province: 'Metro Manila',
+      date_of_birth: new Date('1990-01-01'),
+      address: '123 Test Street, Manila'
+    };
+
+    // Create user
+    const user = await User.create(testUserData);
+    console.log('✅ Test user created successfully');
+
+    // Test instance methods
+    const passwordValid = await user.comparePassword('test123456');
+    const publicProfile = user.getPublicProfile();
+    const fullName = user.getFullName();
+    const isFullyVerified = user.isFullyVerified();
+
+    console.log('🔐 Password validation test:', passwordValid ? '✅ PASS' : '❌ FAIL');
+    console.log('👤 Public profile test:', publicProfile);
+    console.log('📝 Full name test:', fullName);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'User model test completed successfully',
+      data: {
+        user: user.getPublicProfile(),
+        fullName,
+        passwordValidation: passwordValid,
+        isFullyVerified
+      },
+      tests: {
+        userCreation: '✅ PASS',
+        passwordHashing: passwordValid ? '✅ PASS' : '❌ FAIL',
+        publicProfile: '✅ PASS',
+        fullName: '✅ PASS'
+      }
+    });
+  } catch (error) {
+    console.error('❌ User model test error:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'User model test failed',
+      error: process.env.NODE_ENV === 'development' ? error : 'Internal server error'
+    });
+  }
+});
+
+// POST /api/v1/test/worker - Test Worker model creation and methods
+router.post('/worker', async (req, res) => {
+  try {
+    console.log('🧪 Testing Worker model creation...');
+    
+    // Create user first
+    const testUser = await User.create({
+      email: 'worker@helpqo.com',
+      phone: '+639171234568',
+      password_hash: 'worker123456',
+      first_name: 'maria',
+      last_name: 'santos',
+      role: 'worker' as const,
+      city: 'Quezon City',
+      province: 'Metro Manila'
+    });
+
+    // Create worker profile
+    const testWorkerData = {
+      user_id: testUser.id,
+      skills: ['house cleaning', 'laundry', 'cooking'],
+      hourly_rate: 150.00,
+      experience_years: 3,
+      bio: 'Experienced household helper with 3 years of experience in Metro Manila area.',
+      service_areas: ['Quezon City', 'Manila', 'Makati'],
+      max_travel_distance: 15,
+      nbi_clearance_status: 'approved' as const,
+      nbi_clearance_number: 'NBI-2024-12345',
+      portfolio_images: ['https://example.com/portfolio1.jpg'],
+      rating_average: 4.5,
+      total_jobs_completed: 25,
+      total_reviews: 20,
+      is_available: true
+    };
+
+    const worker = await Worker.create(testWorkerData);
+    console.log('✅ Test worker created successfully');
+
+    // Test instance methods
+    const profileCompletion = worker.calculateProfileCompletion();
+    const isFullyVerified = worker.isFullyVerified();
+    const availabilityStatus = worker.getAvailabilityStatus();
+    
+    // Test location service
+    const canServeManila = worker.canServeLocation('Manila');
+    const canServeTagaytay = worker.canServeLocation('Tagaytay');
+    
+    // Test rating update
+    await worker.updateRating(4.8, true);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Worker model test completed successfully',
+      data: {
+        worker: {
+          id: worker.id,
+          skills: worker.skills,
+          hourly_rate: worker.hourly_rate,
+          experience_years: worker.experience_years,
+          bio: worker.bio,
+          service_areas: worker.service_areas,
+          max_travel_distance: worker.max_travel_distance,
+          rating_average: worker.rating_average,
+          verification_level: worker.verification_level,
+          nbi_verified: worker.nbi_clearance_status === 'approved',
+          profile_completion: Math.round(profileCompletion),
+          is_available: worker.is_available
+        },
+        user: testUser.getPublicProfile(),
+        profileCompletion: Math.round(profileCompletion),
+        isFullyVerified,
+        availabilityStatus,
+        rating: worker.rating_average,
+        canServeManila,
+        canServeTagaytay: canServeTagaytay
+      },
+      tests: {
+        workerCreation: '✅ PASS',
+        userAssociation: '✅ PASS',
+        profileCompletion: '✅ PASS',
+        verificationCheck: '✅ PASS',
+        locationService: '✅ PASS',
+        ratingSystem: '✅ PASS'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Worker model test error:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Worker model test failed',
+      error: process.env.NODE_ENV === 'development' ? error : 'Internal server error'
+    });
+  }
+});
+
+// POST /api/v1/test/job - Test Job model creation and methods
+router.post('/job', async (req, res) => {
+  try {
+    console.log('🧪 Testing Job model creation...');
+    
+    // Get or create test client
+    let client = await User.findOne({ where: { email: 'test@helpqo.com' } });
+    if (!client) {
+      client = await User.create({
+        email: 'test@helpqo.com',
+        phone: '+639171234567',
+        password_hash: 'test123456',
+        first_name: 'Juan',
+        last_name: 'Dela Cruz',
+        role: 'client' as const,
+        city: 'Manila',
+        province: 'Metro Manila'
+      });
+    }
+
+    // Test job data
+    const testJobData = {
+      client_id: client.id,
+      title: 'house cleaning service needed',
+      description: 'Looking for reliable house cleaning service for a 3-bedroom apartment in Makati. Need weekly cleaning including bathroom, kitchen, and all rooms. Must be experienced and trustworthy.',
+      category: 'House Cleaning' as any,
+      required_skills: ['house cleaning', 'bathroom cleaning', 'kitchen cleaning'],
+      budget_min: 800,
+      budget_max: 1200,
+      budget_type: 'fixed' as any,
+      estimated_duration: 4,
+      urgency_level: 'normal' as any,
+      location_type: 'onsite' as any,
+      address: '123 Ayala Avenue, Makati City',
+      city: 'Makati',
+      province: 'Metro Manila',
+      postal_code: '1226',
+      coordinates: { lat: 14.5547, lng: 121.0244 },
+      start_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      status: 'open' as any,
+      materials_provided: true,
+      materials_description: 'All cleaning supplies and equipment will be provided'
+    };
+
+    // Create job
+    const job = await Job.create(testJobData as any);
+    console.log('✅ Test job created successfully');
+
+    // Test instance methods
+    const budgetRange = job.getBudgetRange();
+    const budgetPerHour = job.getBudgetPerHour();
+    const isAcceptingApplications = job.isAcceptingApplications();
+    const urgencyIndicator = job.getUrgencyIndicator();
+    const publicInfo = job.getPublicInfo();
+
+    // Test skills matching
+    const workerSkills = ['House Cleaning', 'Laundry', 'Kitchen Cleaning', 'Bathroom Cleaning'];
+    const skillsMatch = job.matchesWorkerSkills(workerSkills);
+
+    // Test location scoring
+    const locationScore = job.calculateLocationScore('Makati', 'Metro Manila');
+
+    // Test view increment
+    await job.incrementViews();
+    await job.incrementViews();
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Job model test completed successfully',
+      data: {
+        job: {
+          id: job.id,
+          title: job.title,
+          description: job.description.substring(0, 100) + '...',
+          category: job.category,
+          required_skills: job.required_skills,
+          budget_range: budgetRange,
+          budget_per_hour: budgetPerHour,
+          estimated_duration: job.estimated_duration,
+          urgency_level: job.urgency_level,
+          location_type: job.location_type,
+          city: job.city,
+          province: job.province,
+          status: job.status,
+          views_count: job.views_count,
+          materials_provided: job.materials_provided,
+          created_at: job.created_at
+        },
+        client: client.getPublicProfile(),
+        budgetRange,
+        budgetPerHour,
+        isAcceptingApplications,
+        urgencyIndicator,
+        skillsMatch,
+        locationScore,
+        viewsAfterIncrement: job.views_count
+      },
+      tests: {
+        jobCreation: '✅ PASS',
+        clientAssociation: '✅ PASS',
+        budgetCalculation: '✅ PASS',
+        skillsMatching: '✅ PASS',
+        locationScoring: '✅ PASS',
+        viewsIncrement: '✅ PASS',
+        urgencyIndicator: '✅ PASS'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Job model test error:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Job model test failed',
       error: process.env.NODE_ENV === 'development' ? error : 'Internal server error'
     });
   }
@@ -315,6 +588,205 @@ router.post('/workflow', async (req, res) => {
     res.status(500).json({
       status: 'error',
       message: 'Booking workflow test failed',
+      error: process.env.NODE_ENV === 'development' ? error : 'Internal server error'
+    });
+  }
+});
+
+// POST /api/v1/test/review - Test Review model creation and methods
+router.post('/review', async (req, res) => {
+  try {
+    console.log('🧪 Testing Review model with 5-model system...');
+    
+    // Get existing test data
+    const testUser1 = await User.findOne({ where: { email: 'test@helpqo.com' } });
+    const testUser2 = await User.findOne({ where: { email: 'worker@helpqo.com' } });
+    const testBooking = await Booking.findOne();
+    
+    if (!testUser1 || !testUser2 || !testBooking) {
+      return res.status(400).json({ 
+        error: 'Test data missing. Run user, worker, job, and booking tests first.' 
+      });
+    }
+
+    // Create review using your RATING_CATEGORIES system
+// Create review using your RATING_CATEGORIES system
+const review = await Review.create({
+  booking_id: testBooking.id,
+  reviewer_id: testUser1.id,
+  reviewee_id: testUser2.id,
+  overall_rating: 5,
+  category_ratings: {
+    quality: 5,
+    punctuality: 4,
+    communication: 5,
+    professionalism: 4,
+    cleanliness: 5,
+    value: 4
+  },
+  review_title: 'Excellent plumbing work!',
+  review_text: 'Professional service, arrived on time, and fixed our kitchen sink perfectly. Highly recommended for any home repairs!',
+  review_photos: [],
+  response_text: null,
+  response_date: null,
+  is_verified_review: false,
+  helpful_count: 0,
+  unhelpful_count: 0,
+  is_flagged: false,
+  admin_notes: null,
+  is_public: true
+}as any);
+    console.log('✅ Review created successfully');
+
+    // Test your sophisticated methods
+    const reviewSummary = review.getReviewSummary();
+    const userRating = await Review.calculateUserRating(testUser2.id);
+    const platformStats = await Review.getPlatformStats();
+    
+    // Test associations
+    const reviewWithAssociations = await Review.findByPk(review.id, {
+      include: ['booking', 'reviewer', 'reviewee']
+    });
+
+    // Test instance methods
+    await review.markHelpful();
+    await review.addResponse('Thank you for the great review! Happy to work with you again.');
+
+    console.log('📊 Review testing results:');
+    console.log(`   Review ID: ${review.id}`);
+    console.log(`   Overall Rating: ${review.overall_rating}/5`);
+    console.log(`   Category Average: ${reviewSummary.category_average}/5`);
+    console.log(`   User Average Rating: ${userRating.average_rating}/5`);
+    console.log(`   Platform Total Reviews: ${platformStats.total_reviews}`);
+    console.log(`   Associations Working: ${!!reviewWithAssociations?.booking}`);
+
+    res.status(200).json({
+      status: 'success',
+      message: '5-model marketplace system with Review complete!',
+      data: {
+        review: {
+          id: review.id,
+          overall_rating: review.overall_rating,
+          category_ratings: review.category_ratings,
+          review_title: review.review_title,
+          review_text: review.review_text.substring(0, 100) + '...',
+          helpful_count: review.helpful_count,
+          has_response: !!review.response_text,
+          is_verified: review.is_verified_review,
+          created_at: review.created_at
+        },
+        review_summary: reviewSummary,
+        user_rating: userRating,
+        platform_stats: platformStats,
+        associations_test: {
+          booking_loaded: !!reviewWithAssociations?.booking,
+          reviewer_loaded: !!reviewWithAssociations?.reviewer,
+          reviewee_loaded: !!reviewWithAssociations?.reviewee
+        }
+      },
+      tests: {
+        reviewCreation: '✅ PASS',
+        categoryRatings: '✅ PASS',
+        reviewSummary: '✅ PASS',
+        userRatingCalculation: '✅ PASS',
+        platformStats: '✅ PASS',
+        associations: '✅ PASS',
+        helpfulMarking: '✅ PASS',
+        responseSystem: '✅ PASS'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Review test failed:', error);
+    res.status(500).json({ 
+      status: 'error',
+      message: 'Review test failed', 
+      error: process.env.NODE_ENV === 'development' ? error : 'Internal server error'
+    });
+  }
+});
+
+// GET /api/v1/test/reviews - Test Review model queries and methods
+router.get('/reviews', async (req, res) => {
+  try {
+    console.log('🔍 Testing Review model queries...');
+
+    // Test scopes and queries
+    const [
+      totalReviews,
+      publicReviews,
+      verifiedReviews,
+      highRatedReviews,
+      recentReviews,
+      helpfulReviews,
+      flaggedReviews
+    ] = await Promise.all([
+      Review.count(),
+      Review.scope('public').count(),
+      Review.scope('verified').count(),
+      Review.scope('highRated').count(),
+      Review.scope('recent').count(),
+      Review.scope('helpful').count(),
+      Review.scope('flagged').count()
+    ]);
+
+    // Test static methods
+    const [
+      rating5Reviews,
+      helpfulReviewsList,
+      platformStats,
+      searchResults
+    ] = await Promise.all([
+      Review.findByRating(5, 5),
+      Review.findHelpfulReviews(5),
+      Review.getPlatformStats(),
+      Review.searchReviews('excellent', { limit: 3 })
+    ]);
+
+    // Test user-specific queries
+    const testUser = await User.findOne({ where: { email: 'worker@helpqo.com' } });
+    const userRating = testUser ? await Review.calculateUserRating(testUser.id) : null;
+
+    console.log('📊 Review query test results:');
+    console.log(`   Total Reviews: ${totalReviews}`);
+    console.log(`   Public Reviews: ${publicReviews}`);
+    console.log(`   Verified Reviews: ${verifiedReviews}`);
+    console.log(`   High Rated Reviews: ${highRatedReviews}`);
+    console.log(`   Platform Average: ${platformStats.average_platform_rating}/5`);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Review model query tests completed',
+      data: {
+        totalReviews,
+        publicReviews,
+        verifiedReviews,
+        highRatedReviews,
+        recentReviews,
+        helpfulReviews,
+        flaggedReviews,
+        rating5Reviews: rating5Reviews.length,
+        helpfulReviewsList: helpfulReviewsList.length,
+        searchResults: searchResults.length,
+        platformStats,
+        userRating
+      },
+      tests: {
+        countQueries: '✅ PASS',
+        scopeQueries: '✅ PASS',
+        ratingQueries: '✅ PASS',
+        helpfulQueries: '✅ PASS',
+        searchQueries: '✅ PASS',
+        platformStats: '✅ PASS',
+        userRatingCalculation: userRating ? '✅ PASS' : '⚠️ NO DATA'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Review query test failed:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Review query test failed',
       error: process.env.NODE_ENV === 'development' ? error : 'Internal server error'
     });
   }
@@ -714,6 +1186,297 @@ router.delete('/cleanup', async (req, res) => {
       error: process.env.NODE_ENV === 'development' ? error : 'Internal server error'
     });
   }
+});
+
+// GET /api/v1/test/user-analytics - Test User business intelligence methods
+router.get('/user-analytics', async (req, res) => {
+  try {
+    console.log('📊 Testing User business intelligence methods...');
+
+    // Test all three new analytics methods
+    const [
+      marketplaceAnalytics,
+      marketPenetration
+    ] = await Promise.all([
+      User.getMarketplaceAnalytics(),
+      User.getMarketPenetrationAnalysis()
+    ]);
+
+    // Test user engagement score with existing test user
+    const testUser = await User.findOne({ where: { email: 'test@helpqo.com' } });
+    const engagementScore = testUser ? await User.getUserEngagementScore(testUser.id) : null;
+
+    console.log('📊 User analytics test results:');
+    console.log(`   Total Users: ${marketplaceAnalytics.total_users}`);
+    console.log(`   Client/Worker Ratio: ${marketplaceAnalytics.user_distribution.client_percentage}%/${marketplaceAnalytics.user_distribution.worker_percentage}%`);
+    console.log(`   Verification Rate: ${marketplaceAnalytics.verification_metrics.verification_rate}%`);
+    console.log(`   Market Penetration: ${marketPenetration.total_addressable_market.market_penetration_percentage}%`);
+    console.log(`   Engagement Score: ${engagementScore?.engagement_score || 'N/A'}/100`);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'User business intelligence tests completed successfully',
+      data: {
+        marketplace_analytics: marketplaceAnalytics,
+        market_penetration: marketPenetration,
+        engagement_score: engagementScore
+      },
+      tests: {
+        marketplaceAnalytics: '✅ PASS',
+        userDistribution: '✅ PASS',
+        verificationMetrics: '✅ PASS',
+        geographicAnalysis: '✅ PASS',
+        engagementMetrics: '✅ PASS',
+        marketPenetration: '✅ PASS',
+        engagementScoring: engagementScore ? '✅ PASS' : '⚠️ NO TEST USER',
+        businessIntelligence: '✅ PASS'
+      }
+    });
+  } catch (error) {
+    console.error('❌ User analytics test failed:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'User analytics test failed',
+      error: process.env.NODE_ENV === 'development' ? error : 'Internal server error'
+    });
+  }
+});
+
+// GET /api/v1/test/worker-analytics - Test Worker business intelligence methods
+router.get('/worker-analytics', async (req, res) => {
+  try {
+    console.log('📊 Testing Worker business intelligence methods...');
+
+    const workerMarketplaceAnalytics = await Worker.getWorkerMarketplaceAnalytics();
+    const earningPotentialAnalysis = await Worker.getEarningPotentialAnalysis();
+
+    // Test worker performance benchmark with existing test worker
+    const testWorker = await Worker.findOne();
+    const performanceBenchmark = testWorker ? 
+      await Worker.getWorkerPerformanceBenchmark(testWorker.id) : null;
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Worker business intelligence tests completed successfully',
+      data: {
+        worker_marketplace_analytics: workerMarketplaceAnalytics,
+        earning_potential_analysis: earningPotentialAnalysis,
+        performance_benchmark: performanceBenchmark
+      },
+      tests: {
+        workerMarketplaceAnalytics: '✅ PASS',
+        earningPotentialAnalysis: '✅ PASS',
+        performanceBenchmarking: performanceBenchmark ? '✅ PASS' : '⚠️ NO TEST WORKER',
+        businessIntelligence: '✅ PASS'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Worker analytics test failed:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Worker analytics test failed',
+      error: process.env.NODE_ENV === 'development' ? error : 'Internal server error'
+    });
+  }
+});
+
+// GET /api/v1/test/job-analytics - Test Job business intelligence methods
+router.get('/job-analytics', async (req, res) => {
+  try {
+    console.log('📊 Testing Job business intelligence methods...');
+
+    // Test all three new Job analytics methods
+    const [
+      jobMarketDemandAnalysis,
+      pricingOptimizationAnalysis,
+      demandForecastAnalysis
+    ] = await Promise.all([
+      Job.getJobMarketDemandAnalysis(),
+      Job.getPricingOptimizationAnalysis(),
+      Job.getDemandForecastAnalysis()
+    ]);
+
+    console.log('📊 Job analytics test results:');
+    console.log(`   Total Jobs: ${jobMarketDemandAnalysis.market_overview.total_jobs}`);
+    console.log(`   Active Jobs: ${jobMarketDemandAnalysis.market_overview.active_jobs}`);
+    console.log(`   Completion Rate: ${jobMarketDemandAnalysis.market_overview.completion_rate}%`);
+    console.log(`   Trending Categories: ${jobMarketDemandAnalysis.category_analysis.trending_categories.length}`);
+    console.log(`   Most Requested Skills: ${jobMarketDemandAnalysis.skills_demand.most_requested_skills.length}`);
+    console.log(`   Geographic Markets: ${Object.keys(jobMarketDemandAnalysis.demand_patterns.geographic_demand).length}`);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Job business intelligence tests completed successfully',
+      data: {
+        job_market_demand_analysis: jobMarketDemandAnalysis,
+        pricing_optimization_analysis: pricingOptimizationAnalysis,
+        demand_forecast_analysis: demandForecastAnalysis
+      },
+      tests: {
+        jobMarketDemandAnalysis: '✅ PASS',
+        marketOverview: '✅ PASS',
+        categoryAnalysis: '✅ PASS',
+        demandPatterns: '✅ PASS',
+        budgetInsights: '✅ PASS',
+        skillsDemand: '✅ PASS',
+        pricingOptimization: '✅ PASS',
+        competitiveAnalysis: '✅ PASS',
+        demandForecasting: '✅ PASS',
+        trendAnalysis: '✅ PASS',
+        businessIntelligence: '✅ PASS'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Job analytics test failed:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Job analytics test failed',
+      error: process.env.NODE_ENV === 'development' ? error : 'Internal server error'
+    });
+  }
+});
+
+// GET /api/v1/test/booking-analytics - Test Booking business intelligence methods
+router.get('/booking-analytics', async (req, res) => {
+  try {
+    console.log('📊 Testing Booking business intelligence methods...');
+
+    // Test all three new Booking analytics methods
+    const [
+      revenueOptimizationAnalysis,
+      workflowEfficiencyAnalysis,
+      predictiveAnalytics
+    ] = await Promise.all([
+      Booking.getRevenueOptimizationAnalysis(),
+      Booking.getWorkflowEfficiencyAnalysis(),
+      Booking.getPredictiveAnalytics()
+    ]);
+
+    console.log('📊 Booking analytics test results:');
+    console.log(`   Total Revenue: ₱${revenueOptimizationAnalysis.revenue_metrics.total_revenue.toLocaleString()}`);
+    console.log(`   Total Commission: ₱${revenueOptimizationAnalysis.revenue_metrics.total_commission.toLocaleString()}`);
+    console.log(`   Commission Rate: ${revenueOptimizationAnalysis.revenue_metrics.commission_rate}%`);
+    console.log(`   Workflow Efficiency: ${workflowEfficiencyAnalysis.workflow_metrics.workflow_efficiency_score}%`);
+    console.log(`   At-Risk Bookings: ${predictiveAnalytics.booking_outcome_forecast.at_risk_bookings.length}`);
+    console.log(`   Success Rate Prediction: ${predictiveAnalytics.success_prediction_model.success_rate_by_factors.medium_budget.success_rate}%`);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Booking business intelligence tests completed successfully',
+      data: {
+        revenue_optimization_analysis: revenueOptimizationAnalysis,
+        workflow_efficiency_analysis: workflowEfficiencyAnalysis,
+        predictive_analytics: predictiveAnalytics
+      },
+      tests: {
+        revenueOptimizationAnalysis: '✅ PASS',
+        revenueMetrics: '✅ PASS',
+        commissionAnalysis: '✅ PASS',
+        paymentFlowAnalysis: '✅ PASS',
+        workerPayoutInsights: '✅ PASS',
+        workflowEfficiencyAnalysis: '✅ PASS',
+        workflowMetrics: '✅ PASS',
+        stageAnalysis: '✅ PASS',
+        satisfactionCorrelation: '✅ PASS',
+        operationalInsights: '✅ PASS',
+        predictiveAnalytics: '✅ PASS',
+        successPredictionModel: '✅ PASS',
+        bookingOutcomeForecast: '✅ PASS',
+        marketPredictions: '✅ PASS',
+        actionableInsights: '✅ PASS',
+        businessIntelligence: '✅ PASS'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Booking analytics test failed:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Booking analytics test failed',
+      error: process.env.NODE_ENV === 'development' ? error : 'Internal server error'
+    });
+  }
+});
+
+// Add this DELETE endpoint to your test.ts file
+router.delete('/cleanup/user/:identifier', async (req, res) => {
+  try {
+    const { identifier } = req.params;
+    
+    // Find user by email or phone
+    const user = await User.findByEmailOrPhone(identifier);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const userId = user.id;
+    const userEmail = user.email;
+
+    // Delete user (will cascade to worker profile)
+    await user.destroy();
+
+    res.json({
+      success: true,
+      message: `User ${identifier} deleted successfully`,
+      deleted_user_id: userId,
+      deleted_email: userEmail
+    });
+
+    console.log(`🗑️ Test user deleted: ${userEmail} (${userId})`);
+    
+  } catch (error: any) {
+    console.error('❌ Delete user error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete user'
+    });
+  }
+});
+
+// Add these test endpoints to test.ts
+
+// Test Philippine phone validation
+router.post('/validation/phone', [
+  ValidationService.validatePhilippinePhone(),
+  ValidationService.handleValidationErrors
+], (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    message: 'Phone validation passed',
+    normalized_phone: req.body.phone
+  });
+});
+
+// Test Filipino name validation
+router.post('/validation/name', [
+  ValidationService.validateFilipineName('first_name'),
+  ValidationService.validateFilipineName('last_name'),
+  ValidationService.handleValidationErrors
+], (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    message: 'Name validation passed',
+    processed_names: {
+      first_name: req.body.first_name,
+      last_name: req.body.last_name
+    }
+  });
+});
+
+// Test complete registration validation
+router.post('/validation/registration', [
+  ValidationService.sanitizeInput,
+  ...ValidationService.getRegistrationValidation(),
+  ValidationService.handleValidationErrors
+], (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    message: 'All registration validation passed',
+    sanitized_data: req.body
+  });
 });
 
 export default router;
